@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galaxy AI | Flux 2 Pro Edit</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .glass { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        body { background: #020617; color: #f8fafc; font-family: 'Inter', sans-serif; }
+        .loader { border-top-color: #3b82f6; animation: spinner 1.5s linear infinite; }
+        @keyframes spinner { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .active-tab { background: #2563eb; color: white; }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-6">
+
+    <div class="glass p-8 rounded-3xl w-full max-w-xl shadow-2xl">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl font-extrabold tracking-tight bg-gradient-to-br from-blue-400 to-indigo-500 bg-clip-text text-transparent">
+                Flux 2 Pro Editor
+            </h1>
+            <p class="text-gray-500 text-sm mt-2">Powered by Amit_Nik_Space</p>
+        </header>
+
+        <div class="flex mb-6 bg-white/5 p-1 rounded-xl border border-white/10">
+            <button id="btnFile" onclick="setMode('file')" class="flex-1 py-2 text-xs font-bold rounded-lg active-tab transition-all">Upload File</button>
+            <button id="btnUrl" onclick="setMode('url')" class="flex-1 py-2 text-xs font-bold rounded-lg text-gray-400 hover:text-white transition-all">Paste URL</button>
+        </div>
+
+        <form id="uploadForm" class="space-y-6">
+            <div id="fileInputArea" class="space-y-2">
+                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400">Source Image</label>
+                <input type="file" id="imageFile" accept="image/*" 
+                    class="block w-full text-sm text-gray-400 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-blue-600 file:text-white cursor-pointer bg-white/5 rounded-xl border border-white/10"/>
+            </div>
+
+            <div id="urlInputArea" class="space-y-2 hidden">
+                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400">Image Public URL</label>
+                <input type="text" id="imageUrl" placeholder="https://example.com/photo.jpg" 
+                    class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none"/>
+            </div>
+
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400">Prompt</label>
+                <textarea id="prompt" rows="3" required
+                    class="w-full bg-white/5 border border-white/10 rounded-xl p-4 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none" 
+                    placeholder="Describe the changes..."></textarea>
+            </div>
+
+            <div class="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10">
+                <div>
+                    <span class="block text-sm font-bold text-gray-200">Smart Refine</span>
+                    <span class="text-[10px] text-gray-500 uppercase">Optimize with Gemini</span>
+                </div>
+                <input type="checkbox" id="refinementToggle" class="w-5 h-5 accent-blue-600">
+            </div>
+
+            <button type="submit" id="submitBtn" 
+                class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl transition-all">
+                Generate
+            </button>
+        </form>
+
+        <div id="loadingState" class="mt-8 hidden flex flex-col items-center">
+            <div class="loader rounded-full border-4 border-t-4 border-gray-800 h-10 w-10 mb-4"></div>
+            <p class="text-blue-400 text-sm animate-pulse">Processing...</p>
+        </div>
+
+        <div id="resultSection" class="mt-8 hidden space-y-4">
+            <div id="refinementBox" class="hidden p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+                <p id="refinedText" class="text-[11px] text-gray-400 italic"></p>
+            </div>
+            <img id="outputImage" class="rounded-2xl border border-white/10 w-full" src="">
+            <button onclick="window.location.reload()" class="w-full text-gray-500 text-xs py-4">Reset Editor</button>
+        </div>
+    </div>
+
+    <script>
+        let currentMode = 'file';
+
+        function setMode(mode) {
+            currentMode = mode;
+            const isFile = mode === 'file';
+            
+            // Toggle Visibility
+            document.getElementById('fileInputArea').classList.toggle('hidden', !isFile);
+            document.getElementById('urlInputArea').classList.toggle('hidden', isFile);
+            
+            // Toggle Tab Style
+            document.getElementById('btnFile').classList.toggle('active-tab', isFile);
+            document.getElementById('btnUrl').classList.toggle('active-tab', !isFile);
+            document.getElementById('btnFile').classList.toggle('text-gray-400', !isFile);
+            document.getElementById('btnUrl').classList.toggle('text-gray-400', isFile);
+        }
+
+        const form = document.getElementById('uploadForm');
+        form.onsubmit = async (e) => {
+            e.preventDefault();
+            document.getElementById('loadingState').classList.remove('hidden');
+            document.getElementById('resultSection').classList.add('hidden');
+
+            const formData = new FormData();
+            formData.append('prompt', document.getElementById('prompt').value);
+            formData.append('prompt_refinement', document.getElementById('refinementToggle').checked);
+
+            if (currentMode === 'file') {
+                const fileInput = document.getElementById('imageFile');
+                if (fileInput.files[0]) formData.append('image', fileInput.files[0]);
+            } else {
+                const urlVal = document.getElementById('imageUrl').value;
+                if (urlVal) formData.append('image_url', urlVal);
+            }
+
+            try {
+                const response = await fetch('/run', { method: 'POST', body: formData });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || "Server Error");
+
+                if (data.prompt) {
+                    document.getElementById('refinedText').innerText = "Refined Prompt: " + data.prompt;
+                    document.getElementById('refinementBox').classList.remove('hidden');
+                }
+
+                document.getElementById('outputImage').src = data.image_data_url;
+                document.getElementById('resultSection').classList.remove('hidden');
+            } catch (err) {
+                alert(err.message);
+            } finally {
+                document.getElementById('loadingState').classList.add('hidden');
+            }
+        };
+    </script>
+</body>
+</html>
