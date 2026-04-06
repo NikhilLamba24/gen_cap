@@ -11,6 +11,7 @@ import binascii
 import os
 import time
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -39,6 +40,24 @@ GEMINI_GENERATE_URL = (
 
 UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# ── Session management for iterative enhancement ──────────────────────
+@dataclass
+class IterationRecord:
+    user_prompt: str
+    enhanced_prompt: str
+    output_data_url: str  # data:<mime>;base64,...
+
+@dataclass
+class SessionData:
+    input_image_data_url: str          # original uploaded image for UI display
+    input_image_b64: str               # raw base64 of original input
+    input_image_mime: str
+    latest_output_b64: str = ""        # raw base64 of latest Galaxy output
+    latest_output_mime: str = "image/jpeg"
+    history: list[IterationRecord] = field(default_factory=list)
+
+sessions: dict[str, SessionData] = {}
 
 app = FastAPI(title="Galaxy image upload → flux_2_pro")
 
@@ -241,6 +260,105 @@ async def refine_prompt_with_gemini(
     refined = (text or "").strip()
     if not refined:
         raise HTTPException(status_code=502, detail="Gemini returned an empty refined prompt.")
+    return refined
+
+
+async def refine_prompt_with_history(
+    client: httpx.AsyncClient,
+    user_prompt: str,
+    image_bytes: bytes,
+    image_mime: str,
+    history: list[IterationRecord],
+) -> str:
+    """
+    Context-aware refinement: considers all previous iterations when building
+    the enhanced prompt for the current request.
+    """
+    if not GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="Set GEMINI_API_KEY (or GOOGLE_API_KEY) for prompt refinement.",
+        )
+    mime = (image_mime or "image/jpeg").split(";")[0].strip() or "image/jpeg"
+    if not mime.startswith("image/"):
+        mime = "image/jpeg"
+    b64 = base64.b64encode(image_bytes).decode("ascii")
+
+    # Build history context
+    history_lines = []
+    for i, rec in enumerate(history, 1):
+        history_lines.append(
+            f"Iteration {i}:\n"
+            f"  User asked: {rec.user_prompt}\n"
+            f"  Enhanced prompt sent: {rec.enhanced_prompt}"
+        )
+    history_block = "\n".join(history_lines) if history_lines else "(none – this is the first iteration)"
+
+    instruction = (
+        "You are an expert prompt architect for a high-end image-to-image editing model.\n"
+        "The attached image is the ORIGINAL source image the user started with. "
+        "The user has been iteratively editing it. Below is the full history of edits so far.\n\n"
+        f"PREVIOUS ITERATIONS:\n{history_block}\n\n"
+        "NEW USER REQUEST:\n"
+        f"{user_prompt.strip()}\n\n"
+        "CRITICAL RULES:\n"
+        "1. INTENT DETECTION: Analyze whether the new request is:\n"
+        "   (a) ADDITIVE — the user is adding more detail or refining the SAME direction as previous edits "
+        "(e.g., previous was 'add a hat' and now says 'make it red'). If ADDITIVE, you MUST incorporate "
+        "the most recent enhanced prompt and layer the new change on top of it.\n"
+        "   (b) COMPLETELY NEW — the user wants an entirely different change unrelated to previous edits "
+        "(e.g., previous was 'add a hat' and now says 'change background to beach'). If NEW, start fresh "
+        "but keep any prior changes that the user hasn't asked to undo.\n"
+        "2. CONTEXT: The original image (attached) is your visual reference. Always describe the "
+        "core subject accurately based on what you SEE in it.\n"
+        "3. MERGE PREVIOUS: If additive, your output must blend the previous enhanced prompt with "
+        f"the new request. The most recent enhanced prompt was:\n"
+        f"'{history[-1].enhanced_prompt if history else 'N/A'}'\n"
+        "4. SAFETY & NEUTRALITY: Refer to all humans simply as 'a person'. Use neutral language.\n"
+        "5. TECHNICAL PHOTOGRAPHY: Use '8k resolution', 'photorealistic textures', 'natural light', "
+        "'depth of field', 'sharp focus'.\n"
+        "6. OUTPUT: Provide ONLY the refined prompt text. No preamble, no commentary.\n"
+    )
+    payload: dict[str, Any] = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": instruction},
+                    {"inline_data": {"mime_type": mime, "data": b64}},
+                ],
+            },
+        ],
+        "safetySettings": [
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_ONLY_HIGH"},
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"},
+        ],
+    }
+    try:
+        r = await client.post(
+            GEMINI_GENERATE_URL,
+            json=payload,
+            headers={"Content-Type": "application/json", "X-goog-api-key": GEMINI_API_KEY},
+            timeout=httpx.Timeout(120.0),
+        )
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Gemini refinement failed: {e}") from e
+    if r.status_code >= 400:
+        try:
+            err = r.json()
+        except Exception:
+            err = r.text
+        raise HTTPException(status_code=502, detail={"gemini_error": err, "status": r.status_code})
+    data = r.json()
+    try:
+        parts = data["candidates"][0]["content"]["parts"]
+        text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+    except (KeyError, IndexError, TypeError) as e:
+        raise HTTPException(status_code=502, detail=f"Unexpected Gemini response: {data!r}") from e
+    refined = (text or "").strip()
+    if not refined:
+        raise HTTPException(status_code=502, detail="Gemini returned empty refined prompt.")
     return refined
 
 
@@ -512,16 +630,16 @@ async def run_flux_edit(
     timeout = httpx.Timeout(120.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         if url_s:
-            body, remote_mime = await _download_open_image(client, url_s)
-            image_urls = _bytes_to_data_url_image_urls(body, remote_mime)
-            image_mime = remote_mime or _sniff_image_mime(body) or "image/jpeg"
+            input_body, remote_mime = await _download_open_image(client, url_s)
+            image_urls = _bytes_to_data_url_image_urls(input_body, remote_mime)
+            image_mime = remote_mime or _sniff_image_mime(input_body) or "image/jpeg"
         else:
             assert image is not None
-            body = await image.read()
-            if not body:
+            input_body = await image.read()
+            if not input_body:
                 raise HTTPException(status_code=400, detail="Empty file.")
-            upload_mime = _normalize_upload_mime(body, image.content_type)
-            image_urls = _image_urls_for_upload(body, upload_mime)
+            upload_mime = _normalize_upload_mime(input_body, image.content_type)
+            image_urls = _image_urls_for_upload(input_body, upload_mime)
             image_mime = upload_mime
 
         effective_prompt = user_prompt
@@ -529,7 +647,7 @@ async def run_flux_edit(
             effective_prompt = await refine_prompt_with_gemini(
                 client,
                 user_prompt,
-                body,
+                input_body,
                 image_mime,
             )
 
@@ -617,25 +735,171 @@ async def run_flux_edit(
                 if raw_b64:
                     run_id_final = status_payload.get("runId") or run_id
                     mime_final = mime or "image/jpeg"
-                    body: dict[str, Any] = {
+                    output_data_url = f"data:{mime_final};base64,{raw_b64}"
+
+                    # ── Create session for iterative enhancement ──
+                    sid = uuid.uuid4().hex
+                    # Build input image data URL for UI display
+                    input_data_url = _bytes_to_data_url_image_urls(
+                        input_body, image_mime
+                    )[0]
+                    input_b64 = base64.b64encode(input_body).decode("ascii")
+                    sessions[sid] = SessionData(
+                        input_image_data_url=input_data_url,
+                        input_image_b64=input_b64,
+                        input_image_mime=image_mime,
+                        latest_output_b64=raw_b64,
+                        latest_output_mime=mime_final,
+                        history=[
+                            IterationRecord(
+                                user_prompt=user_prompt,
+                                enhanced_prompt=effective_prompt,
+                                output_data_url=output_data_url,
+                            )
+                        ],
+                    )
+
+                    resp_body: dict[str, Any] = {
                         "status": "COMPLETED",
+                        "session_id": sid,
                         "mime_type": mime_final,
                         "image_base64": raw_b64,
-                        "image_data_url": f"data:{mime_final};base64,{raw_b64}",
+                        "image_data_url": output_data_url,
+                        "input_image_data_url": input_data_url,
                         "runId": run_id_final,
                         "prompt": effective_prompt,
+                        "iteration": 1,
                     }
                     if prompt_refinement:
-                        body["original_prompt"] = user_prompt
+                        resp_body["original_prompt"] = user_prompt
                     if source_url:
-                        body["image_url"] = source_url
+                        resp_body["image_url"] = source_url
                     if include_galaxy:
-                        body["galaxy"] = status_payload
-                    return JSONResponse(content=body)
+                        resp_body["galaxy"] = status_payload
+                    return JSONResponse(content=resp_body)
                 await asyncio.sleep(poll_interval_sec)
                 continue
 
             await asyncio.sleep(poll_interval_sec)
+
+
+# ── Iterate endpoint ─────────────────────────────────────────────────
+@app.post("/iterate")
+async def iterate_enhancement(
+    session_id: str = Form(...),
+    prompt: str = Form(...),
+) -> JSONResponse:
+    """Take the latest output, refine the prompt with full history context, and run Galaxy again."""
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Session not found. Start a new run first.")
+    if not API_KEY:
+        raise HTTPException(status_code=500, detail="Set GALAXY_API_KEY.")
+
+    sess = sessions[session_id]
+    # Decode ORIGINAL input image — used for BOTH Gemini context AND Galaxy AI input
+    original_bytes = base64.b64decode(sess.input_image_b64)
+    original_mime = sess.input_image_mime
+
+    timeout = httpx.Timeout(120.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        # Context-aware prompt refinement using ORIGINAL image + full history
+        if GEMINI_API_KEY:
+            effective_prompt = await refine_prompt_with_history(
+                client, prompt, original_bytes, original_mime, sess.history,
+            )
+        else:
+            effective_prompt = prompt
+
+        # Build Galaxy payload using ORIGINAL image + enhanced prompt
+        image_urls = _image_urls_for_upload(original_bytes, original_mime)
+        payload = {
+            "nodeType": "flux_2_pro",
+            "input": {
+                "prompt": effective_prompt,
+                "num_images": 1,
+                "image_urls": image_urls,
+                "image_size": "Auto",
+                "seed": 0,
+                "output_format": "JPEG",
+            },
+            "subModelId": "flux-2-pro-edit",
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {API_KEY}",
+        }
+
+        try:
+            response = await client.post(
+                f"{BASE_URL}/v1/nodes/flux_2_pro/run", json=payload, headers=headers,
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=502, detail=f"Galaxy request failed: {e}") from e
+        if response.status_code >= 400:
+            try:
+                detail = response.json()
+            except Exception:
+                detail = response.text
+            raise HTTPException(status_code=response.status_code, detail=detail)
+
+        start = response.json()
+        run_id = start.get("runId")
+        if not run_id:
+            raise HTTPException(status_code=502, detail="No runId from Galaxy.")
+
+        poll_deadline = time.monotonic() + DEFAULT_MAX_POLL_SECONDS
+        while True:
+            if time.monotonic() > poll_deadline:
+                raise HTTPException(status_code=504, detail="Polling timed out.")
+            try:
+                poll_resp = await client.get(
+                    f"{BASE_URL}/v1/nodes/runs/{run_id}",
+                    headers={"Authorization": f"Bearer {API_KEY}"},
+                )
+            except httpx.RequestError as e:
+                raise HTTPException(status_code=502, detail=f"Poll failed: {e}") from e
+            if poll_resp.status_code >= 400:
+                try:
+                    err = poll_resp.json()
+                except Exception:
+                    err = poll_resp.text
+                raise HTTPException(status_code=poll_resp.status_code, detail=err)
+
+            sp = poll_resp.json()
+            if sp.get("status") == "FAILED":
+                raise HTTPException(status_code=502, detail=sp.get("error", sp))
+            if sp.get("status") == "COMPLETED":
+                raw_b64, mime, source_url = await _resolve_output_to_image_base64(client, sp.get("output"))
+                if raw_b64:
+                    mime_final = mime or "image/jpeg"
+                    output_data_url = f"data:{mime_final};base64,{raw_b64}"
+                    # Update session
+                    sess.latest_output_b64 = raw_b64
+                    sess.latest_output_mime = mime_final
+                    sess.history.append(IterationRecord(
+                        user_prompt=prompt,
+                        enhanced_prompt=effective_prompt,
+                        output_data_url=output_data_url,
+                    ))
+                    return JSONResponse(content={
+                        "status": "COMPLETED",
+                        "session_id": session_id,
+                        "image_data_url": output_data_url,
+                        "prompt": effective_prompt,
+                        "original_prompt": prompt,
+                        "iteration": len(sess.history),
+                        "runId": sp.get("runId") or run_id,
+                    })
+                await asyncio.sleep(5)
+                continue
+            await asyncio.sleep(5)
+
+
+@app.delete("/session/{session_id}")
+async def delete_session(session_id: str):
+    """Reset / clear a session."""
+    sessions.pop(session_id, None)
+    return {"status": "cleared"}
 
 
 # Serve uploaded files when PUBLIC_BASE_URL points at this host (e.g. behind ngrok).

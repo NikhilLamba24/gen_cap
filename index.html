@@ -3,133 +3,641 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Galaxy AI | Flux 2 Pro Edit</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>AI Image Editor</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
-        .glass { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
-        body { background: #020617; color: #f8fafc; font-family: 'Inter', sans-serif; }
-        .loader { border-top-color: #3b82f6; animation: spinner 1.5s linear infinite; }
-        @keyframes spinner { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .active-tab { background: #2563eb; color: white; }
-    </style>
-</head>
-<body class="flex items-center justify-center min-h-screen p-6">
-
-    <div class="glass p-8 rounded-3xl w-full max-w-xl shadow-2xl">
-        <header class="text-center mb-8">
-            <h1 class="text-3xl font-extrabold tracking-tight bg-gradient-to-br from-blue-400 to-indigo-500 bg-clip-text text-transparent">
-                Flux 2 Pro Editor
-            </h1>
-            <p class="text-gray-500 text-sm mt-2">Powered by Amit_Nik_Space</p>
-        </header>
-
-        <div class="flex mb-6 bg-white/5 p-1 rounded-xl border border-white/10">
-            <button id="btnFile" onclick="setMode('file')" class="flex-1 py-2 text-xs font-bold rounded-lg active-tab transition-all">Upload File</button>
-            <button id="btnUrl" onclick="setMode('url')" class="flex-1 py-2 text-xs font-bold rounded-lg text-gray-400 hover:text-white transition-all">Paste URL</button>
-        </div>
-
-        <form id="uploadForm" class="space-y-6">
-            <div id="fileInputArea" class="space-y-2">
-                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400">Source Image</label>
-                <input type="file" id="imageFile" accept="image/*" 
-                    class="block w-full text-sm text-gray-400 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-blue-600 file:text-white cursor-pointer bg-white/5 rounded-xl border border-white/10"/>
-            </div>
-
-            <div id="urlInputArea" class="space-y-2 hidden">
-                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400">Image Public URL</label>
-                <input type="text" id="imageUrl" placeholder="https://example.com/photo.jpg" 
-                    class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none"/>
-            </div>
-
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400">Prompt</label>
-                <textarea id="prompt" rows="3" required
-                    class="w-full bg-white/5 border border-white/10 rounded-xl p-4 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none" 
-                    placeholder="Describe the changes..."></textarea>
-            </div>
-
-            <div class="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10">
-                <div>
-                    <span class="block text-sm font-bold text-gray-200">Smart Refine</span>
-                    <span class="text-[10px] text-gray-500 uppercase">Optimize with Gemini</span>
-                </div>
-                <input type="checkbox" id="refinementToggle" class="w-5 h-5 accent-blue-600">
-            </div>
-
-            <button type="submit" id="submitBtn" 
-                class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl transition-all">
-                Generate
-            </button>
-        </form>
-
-        <div id="loadingState" class="mt-8 hidden flex flex-col items-center">
-            <div class="loader rounded-full border-4 border-t-4 border-gray-800 h-10 w-10 mb-4"></div>
-            <p class="text-blue-400 text-sm animate-pulse">Processing...</p>
-        </div>
-
-        <div id="resultSection" class="mt-8 hidden space-y-4">
-            <div id="refinementBox" class="hidden p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl">
-                <p id="refinedText" class="text-[11px] text-gray-400 italic"></p>
-            </div>
-            <img id="outputImage" class="rounded-2xl border border-white/10 w-full" src="">
-            <button onclick="window.location.reload()" class="w-full text-gray-500 text-xs py-4">Reset Editor</button>
-        </div>
-    </div>
-
-    <script>
-        let currentMode = 'file';
-
-        function setMode(mode) {
-            currentMode = mode;
-            const isFile = mode === 'file';
-            
-            // Toggle Visibility
-            document.getElementById('fileInputArea').classList.toggle('hidden', !isFile);
-            document.getElementById('urlInputArea').classList.toggle('hidden', isFile);
-            
-            // Toggle Tab Style
-            document.getElementById('btnFile').classList.toggle('active-tab', isFile);
-            document.getElementById('btnUrl').classList.toggle('active-tab', !isFile);
-            document.getElementById('btnFile').classList.toggle('text-gray-400', !isFile);
-            document.getElementById('btnUrl').classList.toggle('text-gray-400', isFile);
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: #030712;
+            color: #f1f5f9;
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
         }
 
-        const form = document.getElementById('uploadForm');
-        form.onsubmit = async (e) => {
-            e.preventDefault();
-            document.getElementById('loadingState').classList.remove('hidden');
-            document.getElementById('resultSection').classList.add('hidden');
+        /* ── Header ───────────────────────────────────────── */
+        .app-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 32px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            background: rgba(3,7,18,0.8);
+            backdrop-filter: blur(12px);
+            position: sticky;
+            top: 0;
+            z-index: 50;
+        }
+        .app-header h1 {
+            font-size: 20px;
+            font-weight: 800;
+            background: linear-gradient(135deg, #60a5fa, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .app-header .subtitle { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }
+        .iteration-badge {
+            background: rgba(99,102,241,0.15);
+            border: 1px solid rgba(99,102,241,0.3);
+            color: #a5b4fc;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 12px;
+            border-radius: 999px;
+            display: none;
+        }
 
-            const formData = new FormData();
-            formData.append('prompt', document.getElementById('prompt').value);
-            formData.append('prompt_refinement', document.getElementById('refinementToggle').checked);
+        /* ── Main Layout ──────────────────────────────────── */
+        .main-container {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 420px 1fr;
+            gap: 0;
+            overflow: hidden;
+        }
+        @media (max-width: 900px) {
+            .main-container { grid-template-columns: 1fr; }
+        }
 
-            if (currentMode === 'file') {
-                const fileInput = document.getElementById('imageFile');
-                if (fileInput.files[0]) formData.append('image', fileInput.files[0]);
-            } else {
-                const urlVal = document.getElementById('imageUrl').value;
-                if (urlVal) formData.append('image_url', urlVal);
-            }
+        /* ── Left Panel ───────────────────────────────────── */
+        .left-panel {
+            border-right: 1px solid rgba(255,255,255,0.06);
+            padding: 24px;
+            overflow-y: auto;
+            max-height: calc(100vh - 57px);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .panel-section {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 14px;
+            padding: 16px;
+        }
+        .section-title {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: #64748b;
+            margin-bottom: 10px;
+        }
 
-            try {
-                const response = await fetch('/run', { method: 'POST', body: formData });
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.detail || "Server Error");
+        /* Tabs */
+        .tab-group {
+            display: flex;
+            background: rgba(255,255,255,0.04);
+            border-radius: 10px;
+            padding: 3px;
+            border: 1px solid rgba(255,255,255,0.06);
+            margin-bottom: 12px;
+        }
+        .tab-btn {
+            flex: 1;
+            padding: 8px;
+            font-size: 11px;
+            font-weight: 700;
+            border: none;
+            border-radius: 8px;
+            background: transparent;
+            color: #64748b;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .tab-btn.active { background: #2563eb; color: white; }
 
-                if (data.prompt) {
-                    document.getElementById('refinedText').innerText = "Refined Prompt: " + data.prompt;
-                    document.getElementById('refinementBox').classList.remove('hidden');
-                }
+        /* Inputs */
+        .form-input, .form-textarea {
+            width: 100%;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            padding: 12px 14px;
+            color: #e2e8f0;
+            font-size: 13px;
+            font-family: 'Inter', sans-serif;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .form-input:focus, .form-textarea:focus { border-color: #3b82f6; }
+        .form-textarea { resize: vertical; min-height: 80px; }
+        .file-input-wrapper {
+            position: relative;
+            overflow: hidden;
+        }
+        .file-input-wrapper input[type=file] {
+            width: 100%;
+            font-size: 12px;
+            color: #94a3b8;
+            padding: 10px;
+            background: rgba(255,255,255,0.04);
+            border: 1px dashed rgba(255,255,255,0.15);
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        .file-input-wrapper input[type=file]::file-selector-button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            margin-right: 10px;
+        }
 
-                document.getElementById('outputImage').src = data.image_data_url;
-                document.getElementById('resultSection').classList.remove('hidden');
-            } catch (err) {
-                alert(err.message);
-            } finally {
-                document.getElementById('loadingState').classList.add('hidden');
-            }
-        };
-    </script>
+        /* Toggle */
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 14px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 10px;
+        }
+        .toggle-label { font-size: 13px; font-weight: 600; color: #cbd5e1; }
+        .toggle-sub { font-size: 10px; color: #64748b; text-transform: uppercase; }
+        .toggle-switch { width: 20px; height: 20px; accent-color: #3b82f6; cursor: pointer; }
+
+        /* Buttons */
+        .btn-primary {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #2563eb, #4f46e5);
+            color: white;
+            font-size: 14px;
+            font-weight: 700;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            letter-spacing: 0.3px;
+        }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 25px rgba(37,99,235,0.3); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+        .btn-reset {
+            width: 100%;
+            padding: 10px;
+            background: transparent;
+            border: 1px solid rgba(239,68,68,0.3);
+            color: #f87171;
+            font-size: 12px;
+            font-weight: 600;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-reset:hover { background: rgba(239,68,68,0.1); }
+
+        /* ── Right Panel ──────────────────────────────────── */
+        .right-panel {
+            padding: 24px;
+            overflow-y: auto;
+            max-height: calc(100vh - 57px);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .image-card {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 16px;
+            overflow: hidden;
+            position: relative;
+        }
+        .image-card .card-label {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(8px);
+            color: #e2e8f0;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 4px 10px;
+            border-radius: 6px;
+            z-index: 2;
+        }
+        .image-card img {
+            width: 100%;
+            display: block;
+            border-radius: 16px;
+        }
+        .image-placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 280px;
+            color: #334155;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .images-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        @media (max-width: 1200px) {
+            .images-row { grid-template-columns: 1fr; }
+        }
+
+        .scanner-line {
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, rgba(167,139,250,1), transparent);
+            box-shadow: 0 0 15px 3px rgba(167,139,250,0.5);
+            z-index: 3;
+            display: none;
+            animation: scan 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+        }
+        @keyframes scan {
+            0% { top: -10%; opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { top: 110%; opacity: 0; }
+        }
+        .pulse-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(167,139,250,0.05);
+            z-index: 2;
+            display: none;
+            animation: breathe 2s infinite ease-in-out;
+            border-radius: 16px;
+        }
+        @keyframes breathe {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+
+        .loading-text {
+            position: absolute;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(8px);
+            color: #a5b4fc;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 6px 16px;
+            border-radius: 8px;
+            z-index: 4;
+            display: none;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+        /* ── Post-result actions ──────────────────────────── */
+        .result-actions {
+            display: none;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .btn-download {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 10px 20px;
+            background: rgba(34,197,94,0.12);
+            border: 1px solid rgba(34,197,94,0.25);
+            color: #4ade80;
+            font-size: 12px;
+            font-weight: 700;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+        .btn-download:hover { background: rgba(34,197,94,0.2); }
+
+        .enhance-section {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 14px;
+            padding: 16px;
+        }
+        .enhance-section .section-title { margin-bottom: 8px; }
+        .btn-iterate {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #7c3aed, #6d28d9);
+            color: white;
+            font-size: 13px;
+            font-weight: 700;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 10px;
+        }
+        .btn-iterate:hover { box-shadow: 0 6px 20px rgba(124,58,237,0.3); }
+        .btn-iterate:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .refined-prompt-box {
+            display: none;
+            margin-top: 10px;
+            padding: 10px 12px;
+            background: rgba(99,102,241,0.08);
+            border: 1px solid rgba(99,102,241,0.15);
+            border-radius: 10px;
+            font-size: 11px;
+            color: #94a3b8;
+            line-height: 1.5;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────── -->
+<header class="app-header">
+    <div>
+        <h1>AI Image Editor</h1>
+        <div class="subtitle">Powered by AI</div>
+    </div>
+    <div id="iterBadge" class="iteration-badge">Iteration 1</div>
+</header>
+
+<!-- ── Main ───────────────────────────────────────────── -->
+<div class="main-container">
+
+    <!-- LEFT PANEL: Controls -->
+    <div class="left-panel">
+        <!-- Image Source -->
+        <div class="panel-section" id="sourceSection">
+            <div class="section-title">Source Image</div>
+            <div class="tab-group">
+                <button class="tab-btn active" id="btnFile" onclick="setMode('file')">Upload File</button>
+                <button class="tab-btn" id="btnUrl" onclick="setMode('url')">Paste URL</button>
+            </div>
+            <div id="fileArea">
+                <div class="file-input-wrapper">
+                    <input type="file" id="imageFile" accept="image/*" onchange="previewInput()">
+                </div>
+            </div>
+            <div id="urlArea" class="hidden">
+                <input type="text" class="form-input" id="imageUrl" placeholder="https://example.com/photo.jpg">
+            </div>
+        </div>
+
+        <!-- Prompt -->
+        <div class="panel-section" id="initialPromptSection">
+            <div class="section-title">Edit Prompt</div>
+            <textarea class="form-textarea" id="prompt" rows="3" placeholder="Describe exactly what you want to change..."></textarea>
+        </div>
+
+        <!-- Smart Refine Toggle -->
+        <div class="toggle-row" id="refineToggleRow">
+            <div>
+                <div class="toggle-label">Smart Logic</div>
+                <div class="toggle-sub">Auto prompt enhancement</div>
+            </div>
+            <input type="checkbox" class="toggle-switch" id="refinementToggle" checked>
+        </div>
+
+        <!-- Generate -->
+        <button class="btn-primary" id="generateBtn" onclick="startGeneration()">
+            &#10022; Generate
+        </button>
+
+        <!-- Enhance Further (appears after first result) -->
+        <div class="enhance-section" id="enhanceSection" style="display:none;">
+            <div class="section-title">&#128260; Enhance Further</div>
+            <textarea class="form-textarea" id="iteratePrompt" rows="2"
+                placeholder="What else would you like to change?"></textarea>
+            <button class="btn-iterate" id="iterateBtn" onclick="startIteration()">
+                &#9889; Enhance Again
+            </button>
+        </div>
+
+        <!-- Download (appears after first result) -->
+        <a class="btn-download" id="downloadBtn" style="display:none;" download="ai_output.jpg">
+            &#11015; Download Full Quality
+        </a>
+
+        <!-- Reset -->
+        <button class="btn-reset" id="resetBtn" onclick="resetAll()">
+            &#8634; Reset Everything
+        </button>
+    </div>
+
+    <!-- RIGHT PANEL: Images -->
+    <div class="right-panel">
+        <!-- Images Row -->
+        <div class="images-row" id="imagesRow">
+            <!-- Input Image Card -->
+            <div class="image-card" id="inputCard">
+                <div class="card-label">Input</div>
+                <div class="image-placeholder" id="inputPlaceholder">Upload an image to begin</div>
+                <img id="inputPreview" class="hidden" alt="Input">
+            </div>
+
+            <!-- Output Image Card -->
+            <div class="image-card" id="outputCard">
+                <div class="card-label">Output</div>
+                <div class="pulse-overlay" id="shimmer"></div>
+                <div class="scanner-line" id="scanner"></div>
+                <div class="loading-text" id="loadingText">Processing AI request...</div>
+                <div class="image-placeholder" id="outputPlaceholder">Result will appear here</div>
+                <img id="outputPreview" class="hidden" alt="Output">
+            </div>
+        </div>
+
+        <!-- Refined Prompt is hidden by user request. -->
+    </div>
+</div>
+
+<script>
+    // ── State ─────────────────────────────────────────────
+    let currentMode = 'file';
+    let sessionId = null;
+    let iterationCount = 0;
+    let isProcessing = false;
+
+    // ── Tab switching ─────────────────────────────────────
+    function setMode(mode) {
+        currentMode = mode;
+        document.getElementById('fileArea').classList.toggle('hidden', mode !== 'file');
+        document.getElementById('urlArea').classList.toggle('hidden', mode !== 'url');
+        document.getElementById('btnFile').classList.toggle('active', mode === 'file');
+        document.getElementById('btnUrl').classList.toggle('active', mode === 'url');
+    }
+
+    // ── Preview uploaded image ────────────────────────────
+    function previewInput() {
+        const fileInput = document.getElementById('imageFile');
+        if (fileInput.files && fileInput.files[0]) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                document.getElementById('inputPreview').src = e.target.result;
+                document.getElementById('inputPreview').classList.remove('hidden');
+                document.getElementById('inputPlaceholder').classList.add('hidden');
+            };
+            reader.readAsDataURL(fileInput.files[0]);
+        }
+    }
+
+    // ── Show/hide loading state ───────────────────────────
+    function setLoading(on) {
+        isProcessing = on;
+        document.getElementById('shimmer').style.display = on ? 'block' : 'none';
+        document.getElementById('scanner').style.display = on ? 'block' : 'none';
+        document.getElementById('loadingText').style.display = on ? 'block' : 'none';
+        document.getElementById('generateBtn').disabled = on;
+        document.getElementById('iterateBtn').disabled = on;
+        if (on) {
+            document.getElementById('outputPlaceholder').classList.add('hidden');
+        }
+    }
+
+    // ── Show result ───────────────────────────────────────
+    function showResult(data) {
+        // Show output image
+        document.getElementById('outputPreview').src = data.image_data_url;
+        document.getElementById('outputPreview').classList.remove('hidden');
+        document.getElementById('outputPlaceholder').classList.add('hidden');
+
+        // Show input image if returned (first run)
+        if (data.input_image_data_url) {
+            document.getElementById('inputPreview').src = data.input_image_data_url;
+            document.getElementById('inputPreview').classList.remove('hidden');
+            document.getElementById('inputPlaceholder').classList.add('hidden');
+        }
+
+        // Session tracking
+        if (data.session_id) sessionId = data.session_id;
+        iterationCount = data.iteration || iterationCount + 1;
+
+        // Update badge
+        const badge = document.getElementById('iterBadge');
+        badge.textContent = `Iteration ${iterationCount}`;
+        badge.style.display = 'block';
+
+
+
+        // Download link
+        const dlBtn = document.getElementById('downloadBtn');
+        dlBtn.href = data.image_data_url;
+        dlBtn.download = `ai_output_v${iterationCount}.jpg`;
+        dlBtn.style.display = 'inline-flex';
+
+        // Show enhance section in left panel, hide initial generate controls
+        document.getElementById('enhanceSection').style.display = 'block';
+        document.getElementById('generateBtn').style.display = 'none';
+        document.getElementById('initialPromptSection').style.display = 'none';
+        document.getElementById('sourceSection').style.display = 'none';
+        document.getElementById('refineToggleRow').style.display = 'none';
+    }
+
+    // ── First generation ──────────────────────────────────
+    async function startGeneration() {
+        if (isProcessing) return;
+        const promptVal = document.getElementById('prompt').value.trim();
+        if (!promptVal) return alert('Please enter a prompt.');
+
+        const formData = new FormData();
+        formData.append('prompt', promptVal);
+        formData.append('prompt_refinement', document.getElementById('refinementToggle').checked);
+
+        if (currentMode === 'file') {
+            const fileInput = document.getElementById('imageFile');
+            if (!fileInput.files[0]) return alert('Please upload an image.');
+            formData.append('image', fileInput.files[0]);
+        } else {
+            const urlVal = document.getElementById('imageUrl').value.trim();
+            if (!urlVal) return alert('Please enter an image URL.');
+            formData.append('image_url', urlVal);
+        }
+
+        setLoading(true);
+
+        try {
+            const resp = await fetch('/run', { method: 'POST', body: formData });
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail));
+            showResult(data);
+        } catch (err) {
+            alert('Error: ' + err.message);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    // ── Iterative enhancement ─────────────────────────────
+    async function startIteration() {
+        if (isProcessing || !sessionId) return;
+        const promptVal = document.getElementById('iteratePrompt').value.trim();
+        if (!promptVal) return alert('Please describe what else to change.');
+
+        const formData = new FormData();
+        formData.append('session_id', sessionId);
+        formData.append('prompt', promptVal);
+
+        setLoading(true);
+        document.getElementById('loadingText').textContent = `Enhancing (iteration ${iterationCount + 1})...`;
+
+        try {
+            const resp = await fetch('/iterate', { method: 'POST', body: formData });
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail));
+            showResult(data);
+            document.getElementById('iteratePrompt').value = '';
+        } catch (err) {
+            alert('Error: ' + err.message);
+        } finally {
+            setLoading(false);
+            document.getElementById('loadingText').textContent = 'Processing AI request...';
+        }
+    }
+
+    // ── Reset ─────────────────────────────────────────────
+    async function resetAll() {
+        if (sessionId) {
+            try { await fetch(`/session/${sessionId}`, { method: 'DELETE' }); } catch {}
+        }
+        sessionId = null;
+        iterationCount = 0;
+        isProcessing = false;
+
+        // Reset UI
+        document.getElementById('imageFile').value = '';
+        document.getElementById('imageUrl').value = '';
+        document.getElementById('prompt').value = '';
+        document.getElementById('iteratePrompt').value = '';
+
+        document.getElementById('inputPreview').classList.add('hidden');
+        document.getElementById('inputPlaceholder').classList.remove('hidden');
+        document.getElementById('outputPreview').classList.add('hidden');
+        document.getElementById('outputPlaceholder').classList.remove('hidden');
+        document.getElementById('outputPlaceholder').textContent = 'Result will appear here';
+
+        document.getElementById('enhanceSection').style.display = 'none';
+        document.getElementById('downloadBtn').style.display = 'none';
+        document.getElementById('shimmer').style.display = 'none';
+        document.getElementById('scanner').style.display = 'none';
+        document.getElementById('loadingText').style.display = 'none';
+        document.getElementById('generateBtn').disabled = false;
+        document.getElementById('generateBtn').style.display = 'block';
+        document.getElementById('initialPromptSection').style.display = 'block';
+        document.getElementById('sourceSection').style.display = 'block';
+        document.getElementById('refineToggleRow').style.display = 'flex';
+    }
+</script>
 </body>
 </html>
